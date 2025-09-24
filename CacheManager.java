@@ -200,11 +200,11 @@ public class CacheManager {
     }
 
     // 清理过期缓存但线程安全问题
-    public void cleanupExpiredEntries() {
+    public synchronized void cleanupExpiredEntries() {
         // 创建要删除的键列表，但在并发环境中不安全
         List<String> keysToRemove = new ArrayList<>();
 
-        for (Map.Entry<String, Long> entry : cacheTimestamps.entrySet()) {
+        for (Map.Entry<String, Long> entry : new ArrayList<>(cacheTimestamps.entrySet())) {
             if (isExpired(entry.getValue())) {
                 keysToRemove.add(entry.getKey());
             }
