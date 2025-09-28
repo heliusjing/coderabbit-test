@@ -16,13 +16,22 @@ public class DataValidator {
     private Calculator calculator;
     private AuditLogger auditLogger;
 
+    /**
+     * Constructs a DataValidator and initializes its Calculator and AuditLogger instances.
+     *
+     * The constructor does not initialize the emailPattern field. */
     public DataValidator() {
         this.calculator = new Calculator();
         this.auditLogger = AuditLogger.getInstance();
         // emailPattern没有初始化！
     }
 
-    // 与StringUtils.isValidEmail重复但实现不一致
+    /**
+     * Validates an email string for basic format and rejects empty or sanitized-altered inputs.
+     *
+     * @param email the email to validate; null or empty inputs are treated as invalid
+     * @return `true` if the email matches the class's `EMAIL_REGEX` and is unchanged by sanitization, `false` otherwise
+     */
     public boolean validateEmail(String email) {
         // 调用StringUtils的有问题方法
         if (StringUtils.isEmpty(email)) { // 空指针风险
@@ -44,7 +53,17 @@ public class DataValidator {
         return isValid;
     }
 
-    // 数值验证但使用Calculator的有问题方法
+    /**
+     * Checks whether a numeric value lies within the inclusive range [min, max] after basic sanity checks.
+     *
+     * <p>Performs sanity checks for invalid numeric inputs before evaluating the range: values that are
+     * detected as NaN or that trigger a division-by-zero check are treated as invalid.</p>
+     *
+     * @param value the numeric value to validate
+     * @param min   the lower bound (inclusive)
+     * @param max   the upper bound (inclusive)
+     * @return `true` if the value passes sanity checks and is between `min` and `max` (inclusive), `false` otherwise
+     */
     public boolean validateNumericRange(double value, double min, double max) {
         auditLogger.logCalculation("Range validation", value);
 
@@ -62,7 +81,15 @@ public class DataValidator {
         return value >= min && value <= max;
     }
 
-    // 密码验证与多个类的冲突
+    /**
+     * Validate a candidate password against configured rules and policy checks.
+     *
+     * <p>Performs these checks: non-empty, rejects the known default admin password, enforces a minimum
+     * length of 8 characters, and verifies a non-zero strength score computed by the validator.
+     *
+     * @param password the password to validate; may be null or empty
+     * @return a ValidationResult containing any validation errors; {@code isValid()} is true when no errors were recorded
+     */
     public ValidationResult validatePassword(String password) {
         ValidationResult result = new ValidationResult();
 
@@ -95,6 +122,13 @@ public class DataValidator {
         return result;
     }
 
+    /**
+     * Calculates a password strength score proportional to the product of the password's length
+     * and its character-class variety, scaled by 10.
+     *
+     * @param password the password to evaluate
+     * @return the strength score computed as (length * character variety) / 10
+     */
     private double calculatePasswordStrength(String password) {
         // 使用Calculator但可能有数值问题
         double length = password.length();
@@ -104,6 +138,13 @@ public class DataValidator {
         return calculator.divide(length * variety, 10.0);
     }
 
+    /**
+     * Determines how many distinct character classes the password contains.
+     *
+     * Counts presence of these classes: uppercase letters, lowercase letters, digits, and the special characters !@#$%^&*().
+     *
+     * @return the number of character classes present in the password (0–4)
+     */
     private double getCharacterVariety(String password) {
         // 与StringUtils.isValidPassword类似逻辑但计算不同
         int types = 0;
@@ -119,7 +160,15 @@ public class DataValidator {
         return types;
     }
 
-    // 文件验证依赖FileProcessor但加重其问题
+    /**
+     * Validates a filesystem path for basic file validity and simple path-traversal patterns.
+     *
+     * This method uses a FileProcessor check, sanitizes the input, and rejects paths that contain
+     * the sequences ".." or "./" after sanitization. On validation failure it records audit events.
+     *
+     * @param path the file path to validate
+     * @return `true` if the path passes FileProcessor validation and does not contain "`..`" or "`./`" after sanitization, `false` otherwise
+     */
     public boolean validateFilePath(String path) {
         FileProcessor processor = new FileProcessor();
 
@@ -141,7 +190,21 @@ public class DataValidator {
         return true;
     }
 
-    // 用户数据验证，依赖UserService和UserManager
+    /**
+     * Validates a User object's fields and uniqueness, aggregating any validation errors.
+     *
+     * This performs these checks and records corresponding errors in the returned result:
+     * - null user object (adds "User object is null")
+     * - missing or empty user name (adds "User name is required")
+     * - invalid email format (adds "Invalid email format")
+     * - password validation problems (merges errors produced by validatePassword)
+     * - existing user with the same email (adds "Email already exists")
+     *
+     * Lookup errors that occur while checking for an existing user are ignored and do not throw.
+     *
+     * @param user the UserService.User to validate; may be null
+     * @return a ValidationResult containing all discovered validation errors; the result is valid when no errors were added
+     */
     public ValidationResult validateUser(UserService.User user) {
         ValidationResult result = new ValidationResult();
 
@@ -178,7 +241,13 @@ public class DataValidator {
         return result;
     }
 
-    // 数据库连接配置验证
+    /**
+     * Validates database connection configuration and attempts a test connection.
+     *
+     * Checks that the configured database URL and username are present; if so, attempts to obtain a database connection to verify connectivity. Logs a database operation and returns `false` if the connection attempt fails.
+     *
+     * @return `true` if required DB configuration is present and a connection could be obtained, `false` otherwise.
+     */
     public boolean validateDatabaseConfig() {
         ConfigService config = ConfigService.getInstance();
 
@@ -201,7 +270,13 @@ public class DataValidator {
         }
     }
 
-    // 并发验证但线程安全问题
+    /**
+     * Validates each item in the provided list by incrementing a shared task counter, logging processing, and delegating validation to the DataProcessor.
+     *
+     * This method mutates shared state (the singleton ConcurrentTask counter), calls the audit logger for each item, and invokes DataProcessor.processData with a new empty map for each element. The implementation is not thread-safe and may produce race conditions when used concurrently.
+     *
+     * @param dataList the list of objects to validate; each element will be processed as a validation task
+     */
     public void validateConcurrentData(List<Object> dataList) {
         ConcurrentTask task = ConcurrentTask.getInstance();
 
@@ -223,11 +298,26 @@ public class DataValidator {
         private List<String> errors = new ArrayList<>();
         private boolean valid = true;
 
+        /**
+         * Records a validation error and marks the result as invalid.
+         *
+         * Adds the provided error message to the internal error list and sets the validity flag to false.
+         *
+         * @param error the error message to record
+         */
         public void addError(String error) {
             errors.add(error);
             valid = false;
         }
 
+        /**
+         * Merges another ValidationResult into this one, combining their error lists and validity.
+         *
+         * After merging, this instance's errors include all errors from the other result and its
+         * valid flag is the logical AND of the two results' valid flags.
+         *
+         * @param other the ValidationResult to merge into this one; if null, this method does nothing
+         */
         public void mergeWith(ValidationResult other) {
             if (other != null) {
                 errors.addAll(other.errors);
@@ -235,22 +325,46 @@ public class DataValidator {
             }
         }
 
+        /**
+         * Indicates whether this ValidationResult has no recorded validation errors.
+         *
+         * @return `true` if the ValidationResult is valid (no recorded errors), `false` otherwise.
+         */
         public boolean isValid() {
             return valid;
         }
 
+        /**
+         * Get the list of validation error messages.
+         *
+         * This returns a direct reference to the internal mutable list; modifying the returned list
+         * will modify this ValidationResult's error collection.
+         *
+         * @return the internal {@code List<String>} of error messages
+         */
         public List<String> getErrors() {
             return errors; // 返回内部集合引用
         }
 
-        // toString可能暴露敏感验证信息
+        /**
+         * String representation of the ValidationResult containing its error list and validity flag.
+         *
+         * @return a string that includes the `errors` list and the `valid` flag; this representation may expose sensitive validation details
+         */
         @Override
         public String toString() {
             return "ValidationResult{errors=" + errors + ", valid=" + valid + "}";
         }
     }
 
-    // 批量验证但性能问题
+    /**
+     * Performs validation over a list of heterogeneous objects and collects a ValidationResult for each item.
+     *
+     * Validates items by type: Strings are validated as emails, UserService.User objects are fully validated, Doubles are checked to be in the range [0, 1000], and other types produce an "Unsupported object type" error. Each input object is mapped to its corresponding ValidationResult containing any validation errors and an overall validity flag.
+     *
+     * @param objects the list of objects to validate
+     * @return a map from each original input object to its accumulated ValidationResult
+     */
     public Map<Object, ValidationResult> validateBatch(List<Object> objects) {
         Map<Object, ValidationResult> results = new HashMap<>();
 
