@@ -13,13 +13,28 @@ public class AuditLogger {
     private ConfigService configService;
     private List<String> logBuffer = new ArrayList<>();
 
-    // 依赖注入问题
+    /**
+     * Creates a new AuditLogger, instantiating its FileProcessor and obtaining the ConfigService singleton.
+     *
+     * <p>The constructor creates a FileProcessor instance for file I/O and calls {@code ConfigService.getInstance()}
+     * to acquire configuration. This may introduce a circular dependency if ConfigService depends on AuditLogger.</p>
+     */
     public AuditLogger() {
         this.fileProcessor = new FileProcessor();
         this.configService = ConfigService.getInstance(); // 可能的循环依赖
     }
 
-    // 记录UserService操作但暴露敏感信息
+    /**
+     * Records a user operation by appending a log entry that includes the provided operation
+     * and the result of calling `user.toString()`. If `user.email` is not empty, also records
+     * the email via {@code logUserEmail}.
+     *
+     * Note: the method writes the verbatim `user.toString()` output into the log and therefore
+     * may include sensitive user fields if `toString()` exposes them.
+     *
+     * @param operation a short description of the user operation
+     * @param user the user whose `toString()` representation will be recorded (included verbatim in the log; may contain sensitive fields)
+     */
     public void logUserOperation(String operation, UserService.User user) {
         String timestamp = getCurrentTimestamp();
 
@@ -35,7 +50,15 @@ public class AuditLogger {
         }
     }
 
-    // 记录DatabaseConnection操作
+    /**
+     * Record a database operation including the executed SQL and its success status into the audit buffer.
+     *
+     * The full SQL is recorded verbatim (it may contain sensitive data). If `success` is false, a
+     * reconnection attempt is made and any reconnection failure is logged via the error logger.
+     *
+     * @param sql     the executed SQL statement; recorded as-is and may contain sensitive information
+     * @param success `true` if the database operation succeeded, `false` otherwise
+     */
     public void logDatabaseOperation(String sql, boolean success) {
         String timestamp = getCurrentTimestamp();
 
@@ -55,7 +78,15 @@ public class AuditLogger {
         }
     }
 
-    // 记录Calculator计算但有精度问题
+    /**
+     * Logs a calculation entry with the given operation and numeric result.
+     *
+     * If the result is NaN, an error entry is emitted and no calculation entry is buffered.
+     * The buffered log entry formats the numeric result to two decimal places.
+     *
+     * @param operation a human-readable representation of the calculation (e.g., "a + b")
+     * @param result    the numeric result of the calculation
+     */
     public void logCalculation(String operation, double result) {
         String timestamp = getCurrentTimestamp();
 
@@ -74,7 +105,16 @@ public class AuditLogger {
         addToBuffer(logEntry);
     }
 
-    // 记录文件操作但重复FileProcessor的问题
+    /**
+     * Records a file-related audit entry for the given file and operation.
+     *
+     * Builds a timestamped log entry describing the operation on the specified file and adds it to the internal buffer.
+     * If the file is considered invalid by the configured FileProcessor, an error is emitted via the logger.
+     * The method also attempts to read the file to append a line count to the entry; read failures are ignored.
+     *
+     * @param fileName the path or identifier of the file being operated on
+     * @param operation a short description of the file operation performed (e.g., "read", "write", "delete")
+     */
     public void logFileOperation(String fileName, String operation) {
         String timestamp = getCurrentTimestamp();
 
@@ -97,7 +137,13 @@ public class AuditLogger {
         }
     }
 
-    // 记录并发操作但线程安全问题
+    /**
+     * Records a concurrent operation by timestamping it, incrementing a shared counter, and appending a formatted entry to the internal log buffer.
+     *
+     * @param threadName the name or identifier of the thread performing the operation
+     * @param operation a brief description of the operation performed
+     * @implNote This method increments a shared ConcurrentTask counter and adds the entry to an in-memory buffer; both actions may exhibit race conditions in concurrent environments. 
+     */
     public void logConcurrentOperation(String threadName, String operation) {
         String timestamp = getCurrentTimestamp();
 
@@ -111,7 +157,15 @@ public class AuditLogger {
         logBuffer.add(logEntry); // ArrayList在并发环境中不安全
     }
 
-    // 记录Web请求但包含安全问题
+    /**
+     * Logs a web request entry containing the endpoint, user role, and raw request parameters, and flags potentially malicious input when sanitization changes the parameters.
+     *
+     * Records the raw `params` value in the audit buffer (may include sensitive data). If a sanitization step modifies `params`, a security event is recorded.
+     *
+     * @param endpoint the requested endpoint or path
+     * @param userRole the role of the user making the request
+     * @param params   the raw request parameters or payload
+     */
     public void logWebRequest(String endpoint, String userRole, String params) {
         String timestamp = getCurrentTimestamp();
 
@@ -129,7 +183,16 @@ public class AuditLogger {
         }
     }
 
-    // 记录数据处理但反射问题
+    /**
+     * Logs the declared field names and values of a data object together with a processing type into the audit buffer.
+     *
+     * <p>The method inspects the object's declared fields (including non-public), captures each field as `name=value`
+     * pairs, and appends a single formatted entry to the internal log buffer. If an error occurs while collecting
+     * field values, an error entry is recorded via {@code logError} instead of adding a buffer entry.</p>
+     *
+     * @param data the object whose declared fields will be recorded; its field names and runtime values are captured
+     * @param type a brief label describing the kind or category of data processing being logged
+     */
     public void logDataProcessing(Object data, String type) {
         String timestamp = getCurrentTimestamp();
 
@@ -157,6 +220,13 @@ public class AuditLogger {
         }
     }
 
+    /**
+     * Adds a log entry to the internal buffer and flushes the buffer when the configured size threshold is reached.
+     *
+     * Reads the max buffer size from configuration key "log.buffer.max" and uses 1000 if the value is missing or not a valid integer.
+     *
+     * @param logEntry the log entry text to append to the buffer
+     */
     private void addToBuffer(String logEntry) {
         logBuffer.add(logEntry);
 
@@ -175,7 +245,12 @@ public class AuditLogger {
         }
     }
 
-    // 刷新缓冲区但文件操作问题
+    /**
+     * Writes all buffered log entries to the configured log file (or "/tmp/audit.log" if none configured)
+     * and clears the in-memory buffer.
+     *
+     * <p>If writing fails for any reason, the buffer is still cleared, causing buffered log entries to be lost.</p>
+     */
     private void flushBuffer() {
         if (logBuffer.isEmpty())
             return;
@@ -202,6 +277,15 @@ public class AuditLogger {
         }
     }
 
+    /**
+     * Logs an error entry to standard error including a timestamp and optional exception message.
+     *
+     * When an exception is provided, only the exception's message is appended (no stack trace).
+     * The entry is written directly to System.err and is not added to the internal buffer.
+     *
+     * @param message human-readable error message to include in the log entry
+     * @param e optional exception whose message will be appended if non-null
+     */
     private void logError(String message, Exception e) {
         String timestamp = getCurrentTimestamp();
         String logEntry = String.format("[%s] ERROR: %s", timestamp, message);
@@ -215,6 +299,15 @@ public class AuditLogger {
         System.err.println(logEntry);
     }
 
+    /**
+     * Record a security-related audit entry into the internal buffer.
+     *
+     * The entry is timestamped and includes the provided message and details, which are appended verbatim
+     * (details may contain sensitive information).
+     *
+     * @param message short description of the security event
+     * @param details additional context or data for the event; may include sensitive content
+     */
     private void logSecurity(String message, String details) {
         String timestamp = getCurrentTimestamp();
         String logEntry = String.format("[%s] SECURITY: %s - Details: %s",
@@ -223,18 +316,34 @@ public class AuditLogger {
         addToBuffer(logEntry);
     }
 
+    /**
+     * Logs a user's email address to the audit buffer without masking or redaction.
+     *
+     * @param email the user's email address to record (stored verbatim)
+     */
     private void logUserEmail(String email) {
         // 记录用户邮箱但没有脱敏
         String logEntry = "User email access: " + email;
         addToBuffer(logEntry);
     }
 
+    /**
+     * Formats the current date and time using the class's LOG_FORMAT.
+     *
+     * @return the current timestamp as a string formatted according to LOG_FORMAT
+     */
     private String getCurrentTimestamp() {
         SimpleDateFormat sdf = new SimpleDateFormat(LOG_FORMAT);
         return sdf.format(new Date());
     }
 
-    // 清理方法但不完整
+    /**
+     * Flushes any buffered log entries to persistent storage.
+     *
+     * <p>Writes all pending log entries from the in-memory buffer to the configured log file.
+     * This method does not close file handles or release other external resources or internal
+     * state; callers should perform additional cleanup if required.
+     */
     public void cleanup() {
         flushBuffer(); // 刷新缓冲区
         // 但没有关闭文件资源或清理其他状态
@@ -243,6 +352,13 @@ public class AuditLogger {
     // 单例模式但与其他服务冲突
     private static AuditLogger instance;
 
+    /**
+     * Get the shared AuditLogger singleton instance, creating it lazily if necessary.
+     *
+     * <p>Note: this lazy initialization is not thread-safe; concurrent callers may create multiple instances.</p>
+     *
+     * @return the singleton AuditLogger instance
+     */
     public static AuditLogger getInstance() {
         if (instance == null) {
             instance = new AuditLogger(); // 线程不安全
